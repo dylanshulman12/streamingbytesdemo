@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-
+import hashlib
 import requests
 from pydantic import BaseModel
 
@@ -18,8 +18,12 @@ class Data(BaseModel):
     filename: str
     size: int
     totalChunks: int
+    fileHash: str
+    
+CHUNK_SIZE = 50 * 1024 * 1024
 
 
+os.makedirs("uploads", exist_ok=True)
 
 app = FastAPI()
 # os.makedirs("video", exist_ok=True)
@@ -34,27 +38,90 @@ app.add_middleware(
     
 )
 
-files = []
+uploading = []
+
+
+
+
+
+# retry function, check if id exists, if not just start upload again!
+
+def checkUploadIntegrity(id):
+
+
+    not_recieved = []
+    directory = ""
+    filename = ""
+    userFileHashValue = ""
+    chunks_recieved = []
+    total_chunks = 0
+
+    for upload in uploading:
+        if upload["file_id"] == id:
+            filename = upload["name"]
+            userFileHashValue = upload["hash"]
+            chunks_recieved = upload["received_chunks"]
+            total_chunks = upload["total_chunks"]
+
+    print(filename)       
+    for i in range(total_chunks):
+        if i not in chunks_recieved:
+            not_recieved.append(i)
+    
+    if not_recieved != []:
+
+
+        return not_recieved
+    else:
+
+
+
+        
+
+
+        #better version
+        #Search uploaded files!
+
+        hasher = hashlib.sha256()
+        #Currently working on hashes, then do concurrent uploads!
+        with open(f"uploads/{filename}", "rb") as file:
+            while chunk := file.read(1024 * 1024): #cool walrus operator
+                hasher.update(chunk)
+
+        hash_value = hasher.hexdigest()
+
+
+        if hash_value == userFileHashValue:
+            print("same file")
+        
+
+        
+    
+    
 
 @app.post("/start-upload/")
 def start_upload(file: Data):
-    print(file.filename)
+    file_id = str(uuid4())
+
+
     print(
     f"{file.size} bytes, "
     f"{file.size/1024} KiB, "
     f"{file.size/1024**2} MiB, "
     f"{file.size/1024**3} GiB"
     )    
-
-    files.append({
-        "name": file.filename, "size": file.size, "totalChunks": file.totalChunks
+    
+    uploading.append({
+        "file_id": file_id, "name": file.filename, "size": file.size, "total_chunks": file.totalChunks, "received_chunks": [], "hash": file.fileHash
     })
-    print(f"total chunks: {type(file.totalChunks)}")
+
     #Create file ...
     with open(f"uploads/{file.filename}", "wb"):
         pass
     
-    return {"id": uuid4(), "totalChunks": file.totalChunks}
+    return {
+        "file_id": file_id, "name": file.filename, "size": file.size, "total_chunks": file.totalChunks, "received_chunks": [], "hash": file.fileHash
+    }
 
 
 
@@ -64,23 +131,69 @@ def start_upload(file: Data):
 async def upload(
     request: Request,
     name: str = Header(),
+    file_id: str = Header(),
     Current_Chunk: int = Header(),
     chunk_end: int = Header(),
+    end: bool = Header()
 ):
     chunk = await request.body()
 
-    print(name)
-    print(Current_Chunk)
-    print(chunk_end)
-    print(len(chunk))
+    # print(name)
+    # print(Current_Chunk)
+    # print(chunk_end)
+    # print(len(chunk))
 
+    recieved = []
+    for upload in uploading:
+            if upload["file_id"] == file_id:
+                upload["received_chunks"].append(Current_Chunk)  
+                recieved = upload["received_chunks"]          
+    print(recieved)            
     with open(f"uploads/{name}", "r+b") as file:        
-        file.seek(Current_Chunk*(5*1024*1024))
+        file.seek(Current_Chunk*CHUNK_SIZE)
         file.write(chunk)
+    
+
+    print(file_id)                
+    if end == True:
+        print("file end!")
         
-    if Current_Chunk == files[0]["totalChunks"]-1:
-        print("file transfered successfully!")
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
     # with open(name)
 
 
+            # path.mkdir(parents=True, exist_ok=True)
             
+#Bad for larger files as this can load a 30gb file into memory!!!!
+# import hashlib
+
+# with open("example.pdf", "rb") as file:
+#     data = file.read()
+
+# hash_value = hashlib.sha256(data).hexdigest() Convert into human readable letters...
+
+# print(hash_value)
+
+

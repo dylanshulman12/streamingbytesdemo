@@ -1,8 +1,12 @@
 "use client";
 
 import { useRef } from "react";
+import { sha256 } from "js-sha256"; //import incremental hash lib
 
-const chunkSize = 5 * 1024 * 1024;
+// const chunkSize = 5 * 1024 * 1024; //this is 5 MiB so lets try something a bit more...
+const chunkSize = 50 * 1024 * 1024; 
+
+
 
 // My algorithm!
 
@@ -28,7 +32,54 @@ type fileState = {
 
 export default function Home() {
   
+
+
 const fileRef = useRef<fileState | null>(null);
+const fileHash = useRef<Promise <String> | null>(null);
+
+
+async function getHash(file: fileState)  {
+ 
+  const hash = sha256.create();
+  // console.log(hash);
+  //hash 10 mib at once
+  for (let i = 0; i < file.size; i+=10*1024*1024) { //10mib at once!
+    
+    const stuff = file.slice(i,i+10*1024*1024) // not read over errors as slice just gives you whatever is left on the tailend!
+
+    const stuffArray = new Uint8Array (await stuff.arrayBuffer() )
+    // console.log(stuff.size)
+    hash.update(stuffArray)
+    
+    // console.log(hash)
+  
+  }
+
+  
+
+
+  return hash.hex()
+}
+
+async function createFile(file: fileState, fileHash: string) {
+    const response = await fetch("http://localhost:8000/start-upload/", {
+      
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filename: file.name,
+        size: file.size,
+        totalChunks: file.totalChunks,
+        fileHash: fileHash
+      }),
+    });
+    const data = await response.json()
+
+    return data
+  }
+
 
 const setFile = async (event) => {
   const file = event.target.files?.[0];
@@ -40,45 +91,40 @@ const setFile = async (event) => {
   } else {
     totalChunks = Math.floor(division) + 1;
   }
+
+  
   console.log(file.name);
   console.log(file.size);
   console.log(file.type);
   console.log("chunks!");
   console.log(totalChunks);
-
-  
-
-  const response = await fetch("http://localhost:8000/start-upload/", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      filename: file.name,
-      size: file.size,
-      totalChunks: totalChunks,
-    }),
-  });
-
-
-
-  console.log(response.status);
-  const data = await response.json()
-  console.log(data);
-
-  // Since the object fileRef is originally null, we must ASSIGN IT ALL AT ONCE!!!
+   
+  // Since the object fileRef is originally null, we must ASSIGN IT ALL AT ONCE!!! But we dont know id yet so..
   fileRef.current = {
     file: file,
     name: file.name,
-    id: data.id,
+    id: "",
     size: file.size,
     currentChunk: 0,
     totalChunks: totalChunks,
   };
+
+   fileHash.current = getHash(file)
+  
 };
 
 const sendFile = async () => {
+ 
+  
   if (fileRef.current) {
+    const file = fileRef.current.file
+    const hash = await fileHash.current
+    const data = await createFile(fileRef.current, hash)
+    console.log(data.status);
+    fileRef.current.id = data.file_id
+
+
+
     const current = fileRef.current
     for (let i = 0; i < current.totalChunks; i++) {
       if (i === current.totalChunks - 1) {
@@ -87,13 +133,17 @@ const sendFile = async () => {
           current.size,
         );
 
+
+
         const response = await fetch("http://localhost:8000/upload/", {
           method: "POST",
           headers: {
             "Content-Type": "application/octet-stream",
             "name": String(current.name),
+            "file-id": String(fileRef.current.id),
             "Current-Chunk": String(i),
             "chunk-end": String(current.size),
+            "end": String(true)
           },
           body: chunk,
         });
@@ -101,7 +151,7 @@ const sendFile = async () => {
         const data = await response.json();
         if (!response.ok) {
           console.log("an error occured");
-          console.log(response);
+          console.log(data);
         }
       } else {
         const chunk = current.file.slice(
@@ -113,32 +163,43 @@ const sendFile = async () => {
           headers: {
             "Content-Type": "application/octet-stream",
             "name": String(current.name),
-            "Current-Chunk": String(i),
-            "chunk-end": String(i * chunkSize + chunkSize)
+            "file-id": String(current.id),
+            "current-chunk": String(i),
+            "chunk-end": String(i * chunkSize + chunkSize),
+            "end": "false"
           },
           body: chunk,
-        });
+        }
+      )
 
         const data = await response.json();
         if (!response.ok) {
           console.log("an error occured");
-          console.log(response);
+          console.log(data);
         }
+
       }
     }
   } else {
     console.log("No file selected!");
   }
+
 };
 
 
   return (
     <div>
-      <p>yo</p>
-      <input type="file" onChange={(event) => setFile(event)} />
+      <p>upload a folder</p>
+      <input type="file" multiple {...({ webkitdirectory: "" })} onChange={(event) => setFile(event)} />
+      <button onClick={() => sendFile()}>Start upload</button>
+
+
+      <p>upload files</p>
+      <input type="file" multiple onChange={(event) => setFile(event)} />
       <button onClick={() => sendFile()}>Start upload</button>
     </div>
   );
 }
 
 // fetch(url, { method: "POST", headers: { "Upload-ID": uploadId, "Upload-Offset": String(offset), "Content-Type": "application/octet-stream" }, body: chunk });
+
